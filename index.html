@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Flappy Friends — Pixel Edition</title>
+<style>
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#202b55;font-family:system-ui,Arial,sans-serif;touch-action:manipulation}
+body{display:flex;align-items:center;justify-content:center}
+#wrap{position:relative;width:min(100vw,60vh);height:min(100vh,166.666vw);max-width:480px;max-height:800px;aspect-ratio:3/5;background:#304d83;overflow:hidden}
+canvas{display:block;width:100%;height:100%;image-rendering:pixelated}
+#tools{position:absolute;left:8px;right:8px;top:8px;display:flex;gap:6px;justify-content:center;flex-wrap:wrap;z-index:5}
+.tool{background:#15213dcc;color:white;border:1px solid #fff8;border-radius:8px;padding:6px 9px;font-size:12px}
+.tool input{display:none}
+#hint{position:absolute;bottom:8px;left:0;right:0;text-align:center;color:#fff9;font-size:10px;pointer-events:none}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="game" width="480" height="800" aria-label="Flappy Friends game"></canvas>
+  <div id="tools">
+    <label class="tool">📷 Choose friend photo<input id="photoInput" type="file" accept="image/*"></label>
+    <label class="tool">🎵 Choose music<input id="musicInput" type="file" accept="audio/*"></label>
+    <button class="tool" id="musicBtn">🔊 Music: ON</button>
+  </div>
+  <div id="hint">Tap / click / Space to fly</div>
+</div>
+<script>
+(() => {
+const canvas=document.getElementById('game'),ctx=canvas.getContext('2d');
+ctx.imageSmoothingEnabled=false;
+const W=480,H=800,GY=728,GROUND=72;
+const colors={sky1:'#2a3165',sky2:'#3d70a6',white:'#f0f0ff',yellow:'#ffe628',blue:'#5a91eb',
+ cloud1:'#5a91be',cloud2:'#73a9d0',city1:'#4c6799',city2:'#384f7b',
+ green:'#6fcb2a',light:'#b5f454',dark:'#2d7020',ground:'#f6ba75',bush:'#1eae32'};
+let photo=null,musicURL=null,audio=new Audio();audio.loop=true;audio.volume=.4;
+let musicOn=true, best=Number(localStorage.getItem('flappyFriendsBest')||0);
+let state,scroll=0,last=0,stars=[];
+for(let i=0;i<48;i++)stars.push({x:Math.random()*W,y:Math.random()*430,s:2+Math.floor(Math.random()*3),c:[colors.white,colors.yellow,colors.blue][Math.floor(Math.random()*3)]});
+function reset(){state={x:112,y:368,v:0,pipes:[],score:0,spawn:0,started:false,dead:false,shield:0,flash:0};}
+reset();
+function fitText(text,size,color,x,y,stroke=3){ctx.font=`900 ${size}px system-ui,Arial`;ctx.textAlign='center';ctx.textBaseline='middle';ctx.lineJoin='round';ctx.lineWidth=stroke;ctx.strokeStyle='#11121e';ctx.strokeText(text,x,y);ctx.fillStyle=color;ctx.fillText(text,x,y);}
+function rect(x,y,w,h,c){ctx.fillStyle=c;ctx.fillRect(Math.round(x),Math.round(y),Math.round(w),Math.round(h));}
+function background(){
+ let g=ctx.createLinearGradient(0,0,0,H);g.addColorStop(0,colors.sky1);g.addColorStop(1,colors.sky2);ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+ for(const s of stars){rect(s.x,s.y,s.s,s.s,s.c);if(s.c===colors.yellow&&s.s>3){rect(s.x-2,s.y+1,s.s+4,2,s.c);rect(s.x+1,s.y-2,2,s.s+4,s.c);}}
+ // Blocky clouds
+ let shift=(scroll*.18)%630;
+ for(const b of [-70,120,310,500]){let x=((b-shift+630)%630)-70,y=465+(b%3)*6;
+ rect(x,y+18,145,28,colors.cloud1);rect(x+18,y,35,35,colors.cloud1);rect(x+48,y-12,43,48,colors.cloud1);
+ rect(x+8,y+20,120,15,colors.cloud2);rect(x+35,y+7,30,26,colors.cloud2);rect(x+62,y,27,34,colors.cloud2);}
+ // City skyline parallax
+ const backs=[[0,625,36,80],[45,605,42,100],[94,638,32,67],[133,590,49,115],[190,620,38,85],[235,600,46,105],[289,635,37,70],[331,612,46,93],[384,590,40,115],[430,625,50,80]];
+ const fronts=[[10,650,48,55],[70,632,44,73],[123,655,48,50],[180,638,50,67],[242,652,40,53],[293,625,55,80],[358,645,48,60],[416,635,60,70]];
+ for(const [x0,y,w,h] of backs){let x=((x0-scroll*.28+560)%560)-40;rect(x,y,w,h,colors.city1);rect(x,y,5,h,'#688bb8');for(let wy=y+12;wy<y+h-4;wy+=16)for(let wx=x+10;wx<x+w-5;wx+=13)rect(wx,wy,5,7,'#7799c2');}
+ for(const [x0,y,w,h] of fronts){let x=((x0-scroll*.38+580)%580)-50;rect(x,y,w,h,colors.city2);for(let wy=y+10;wy<y+h-3;wy+=15)for(let wx=x+9;wx<x+w-4;wx+=13)rect(wx,wy,5,6,'#56709d');}
+ // Bushes
+ for(let x=-20;x<W+30;x+=26){let xx=x-(scroll*.75%26),y=GY-38;rect(xx,y+19,28,24,'#128b30');rect(xx+3,y+10,21,24,'#1eae32');rect(xx+7,y+4,12,13,'#37cd39');rect(xx-4,y+17,10,14,'#1eae32');}
+ // Ground tiles and dirt
+ rect(0,GY,W,15,'#8bdc36');rect(0,GY+12,W,5,'#30691b');
+ let ts=scroll%38;for(let x=-38;x<W+38;x+=38){let xx=x-ts;ctx.strokeStyle='#30691b';ctx.lineWidth=3;ctx.strokeRect(xx,GY+1,36,13);rect(xx+4,GY+4,13,4,'#c2ef60');rect(xx+20,GY+9,12,3,'#c2ef60');}
+ rect(0,GY+17,W,GROUND-17,colors.ground);rect(0,GY+17,W,5,'#ffd79d');
+}
+function drawPipe(p){
+ let x=Math.round(p.x),gapY=Math.round(p.gapY),gap=p.gap,w=66,cap=20,top=gapY-gap/2,bottom=gapY+gap/2;
+ if(top>0){rect(x,0,w,top,colors.dark);rect(x+3,0,w-6,top,colors.green);rect(x+8,0,8,top,colors.light);rect(x+w-14,0,8,top,'#5ba626');ctx.strokeStyle='#14141e';ctx.lineWidth=3;ctx.strokeRect(x,0,w,top);rect(x-6,top-cap,w+12,cap,colors.dark);rect(x-3,top-cap+3,w+6,cap-6,colors.green);rect(x+5,top-cap+4,8,cap-8,colors.light);ctx.strokeRect(x-6,top-cap,w+12,cap);}
+ let bh=GY-bottom;if(bh>0){rect(x,bottom,w,bh,colors.dark);rect(x+3,bottom,w-6,bh,colors.green);rect(x+8,bottom,8,bh,colors.light);rect(x+w-14,bottom,8,bh,'#5ba626');ctx.strokeRect(x,bottom,w,bh);rect(x-6,bottom,w+12,cap,colors.dark);rect(x-3,bottom+3,w+6,cap-6,colors.green);rect(x+5,bottom+4,8,cap-8,colors.light);ctx.strokeRect(x-6,bottom,w+12,cap);}
+}
+function drawPlayer(){
+ const x=state.x,y=state.y;
+ if(photo){ctx.save();ctx.beginPath();ctx.arc(x,y,24,0,Math.PI*2);ctx.fillStyle='#fff';ctx.fill();ctx.clip();ctx.drawImage(photo,x-21,y-21,42,42);ctx.restore();ctx.beginPath();ctx.arc(x,y,24,0,Math.PI*2);ctx.strokeStyle='#171725';ctx.lineWidth=4;ctx.stroke();}
+ else {rect(x-21,y-14,42,29,'#171725');rect(x-18,y-11,36,23,'#ffd324');rect(x+12,y-2,13,9,'#ff8b23');rect(x+3,y-10,12,12,'#fff');rect(x+8,y-7,5,6,'#171725');}
+ if(state.shield>0){ctx.beginPath();ctx.arc(x,y,35+Math.sin(performance.now()/90)*2,0,Math.PI*2);ctx.strokeStyle='#d2a5ff';ctx.lineWidth=3;ctx.stroke();}
+}
+function draw(){
+ background();
+ for(const p of state.pipes)drawPipe(p);
+ if(!state.dead)drawPlayer();
+ fitText(String(state.score),58,'#fff',W/2,58,4);
+ fitText('BEST '+best,18,'#fff',66,28,3);
+ if(state.shield>0&&!state.dead)fitText('SHIELD!',20,'#ffe628',W/2,102,3);
+ if(!state.started&&!state.dead){
+   fitText('GET READY',43,'#ffbd1f',W/2,335,5);
+   fitText('TAP TO FLY',28,'#fff',W/2,392,4);
+   let hy=455+Math.sin(performance.now()/130)*4;
+   fitText('☝',42,'#fff',W/2-24,hy,3);
+   rect(W/2+8,hy-16,86,32,'#eb3d34');ctx.strokeStyle='#fff';ctx.lineWidth=3;ctx.strokeRect(W/2+8,hy-16,86,32);
+   fitText('TAP',21,'#fff',W/2+51,hy,2);
+ }
+ if(state.dead){rect(28,267,W-56,225,'#17203be8');ctx.strokeStyle='#fff';ctx.lineWidth=4;ctx.strokeRect(28,267,W-56,225);fitText('GAME OVER',40,'#eb3d34',W/2,311,4);fitText('FRIEND GOT TROLLED!',18,'#fff',W/2,358,3);fitText('SCORE: '+state.score,28,'#ffe628',W/2,405,3);fitText('BEST: '+best,25,'#fff',W/2,442,3);fitText('TAP TO RETRY',18,'#ffe628',W/2,472,3);}
+}
+function flap(){
+ if(state.dead)reset();
+ state.started=true;state.v=-6.6;
+ // Browsers require a user gesture before audio can play
+ if(musicOn&&musicURL&&audio.paused)audio.play().catch(()=>{});
+}
+function update(dt){
+ if(!state.started||state.dead)return;
+ state.spawn+=dt;state.shield=Math.max(0,state.shield-dt);
+ const level=Math.floor(state.score/8);
+ const speed=Math.min(2.8+level*.12,4);
+ state.v=Math.min(state.v+.34*dt,7.2);state.y+=state.v*dt;scroll+=speed*dt;
+ if(state.spawn>100){const gap=Math.max(185,205-level*2);state.pipes.push({x:W+20,gapY:250+Math.random()*(GY-400),gap,passed:false});state.spawn=0;}
+ for(const p of state.pipes){p.x-=speed*dt;if(!p.passed&&p.x+66<state.x){p.passed=true;state.score++;if(state.score%5===0)state.shield=150;}}
+ state.pipes=state.pipes.filter(p=>p.x>-90);
+ let hit=state.y-20<0||state.y+20>=GY;
+ const player={x:state.x-17,y:state.y-17,w:34,h:34};
+ for(const p of state.pipes){const top=p.gapY-p.gap/2,bottom=p.gapY+p.gap/2;if(player.x+player.w>p.x&&player.x<p.x+66&&(player.y<top||player.y+player.h>bottom))hit=true;}
+ if(hit){if(state.shield>0){state.shield=0;state.v=-4.5;state.y=Math.max(35,Math.min(state.y,GY-35));}else{state.dead=true;best=Math.max(best,state.score);localStorage.setItem('flappyFriendsBest',String(best));}}
+}
+canvas.addEventListener('pointerdown',e=>{e.preventDefault();flap();});
+window.addEventListener('keydown',e=>{if(e.code==='Space'||e.code==='ArrowUp'){e.preventDefault();flap();}});
+document.getElementById('photoInput').addEventListener('change',e=>{const f=e.target.files[0];if(!f)return;const url=URL.createObjectURL(f);const im=new Image();im.onload=()=>{photo=im;};im.src=url;});
+document.getElementById('musicInput').addEventListener('change',e=>{const f=e.target.files[0];if(!f)return;if(musicURL)URL.revokeObjectURL(musicURL);musicURL=URL.createObjectURL(f);audio.src=musicURL;if(musicOn)audio.play().catch(()=>{});});
+document.getElementById('musicBtn').addEventListener('click',()=>{musicOn=!musicOn;document.getElementById('musicBtn').textContent=musicOn?'🔊 Music: ON':'🔇 Music: OFF';if(!musicOn)audio.pause();else if(musicURL)audio.play().catch(()=>{});});
+function loop(t){const dt=Math.min((t-last)/16.6667||1,2);last=t;update(dt);draw();requestAnimationFrame(loop);}
+requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
